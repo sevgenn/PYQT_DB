@@ -13,8 +13,6 @@ from metaclasses import ServerVerifier
 from descriptors import Port
 import threading
 from storage_db import Storage
-from PyQt5.QtWidgets import QApplication
-from server_window import ServerMainWindow
 
 SERVER_LOGGER = logging.getLogger('server')
 
@@ -78,7 +76,7 @@ class Server(threading.Thread, metaclass=ServerVerifier):
                 for client_with_message in recv_list:
                     try:
                         self.manage_message(get_message(client_with_message), client_with_message)
-                    except OSError:
+                    except Exception:
                         # Регистрируем в базе отключение клиента:
                         for client_name in self.names:
                             if self.names[client_name] == client_with_message:
@@ -116,7 +114,7 @@ class Server(threading.Thread, metaclass=ServerVerifier):
             self.logger.debug(f'Отказ в регистрации клиента {client}.')
             client.close()
 
-    def remove_client(self, client_name):
+    def remove_client(self, client_name: str):
         """Удаляет клиента из списка клиентов."""
         # Регистрируем в базе выход клиента:
         self.database.logout_user(client_name)
@@ -139,8 +137,8 @@ class Server(threading.Thread, metaclass=ServerVerifier):
             self.messages.append(message)
             return
         # Обрабатываем запрос на выход:
-        elif ACTION in message and message[ACTION] == EXIT and ACCOUNT_NAME in message:
-            self.remove_client(ACCOUNT_NAME)
+        elif ACTION in message and message[ACTION] == EXIT and ACCOUNT_NAME in message and self.names[message[ACCOUNT_NAME]] == client:
+            self.remove_client(message[ACCOUNT_NAME])
             return
         # Обрабатываем запрос списка контактов:
         elif ACTION in message and message[ACTION] == GET_CONTACTS and USER in message:
@@ -155,13 +153,13 @@ class Server(threading.Thread, metaclass=ServerVerifier):
             self.database.add_contact(message[USER], message[ACCOUNT_NAME])
             response = {RESPONSE: 200}
             send_message(client, response)
-            return
+            send_message(client, response)
         # Обрабатываем удаление контакта:
         elif ACTION in message and message[ACTION] == REMOVE_CONTACT and ACCOUNT_NAME in message and USER in message:
             self.database.remove_contact(message[USER], message[ACCOUNT_NAME])
             response = {RESPONSE: 200}
             send_message(client, response)
-            return
+            send_message(client, response)
         else:
             response = {
                 RESPONSE: 400,
@@ -174,7 +172,7 @@ class Server(threading.Thread, metaclass=ServerVerifier):
         """Отправляет сообщения из списка получателям."""
         if message[DESTINATION] in self.names and self.names[message[DESTINATION]] in client_list:
             send_message(self.names[message[DESTINATION]], message)
-            # Записываем в базу:
+            # Заисываем в базу:
             self.database.save_message(message[SENDER], message[DESTINATION], message[MESSAGE_TEXT])
             self.logger.info(f'Отправлено сообщение клиенту {message[DESTINATION]} от клиента {message[SENDER]}.')
         elif message[DESTINATION] in self.names and self.names[message[DESTINATION]] not in client_list:
@@ -204,10 +202,6 @@ def main():
     server = Server(listened_address, listened_port, database)
     # server.daemon = True
     server.start()
-
-    server_app = QApplication(sys.argv)
-    main_window = ServerMainWindow()
-    server_app.exec_()
 
 
 if __name__ == '__main__':

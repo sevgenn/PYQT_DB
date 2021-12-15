@@ -30,7 +30,7 @@ class ClientStorage:
             self.post = post
             self.created_at = datetime.now()
 
-    def __init__(self, path, client_name):
+    def __init__(self, path: str, client_name: str):
         self.db_engine = create_engine(f'sqlite:///{path}_{client_name}.db3', echo=False, pool_recycle=7200,
                                        connect_args={'check_same_thread': False})
         self.Base.metadata.create_all(self.db_engine)
@@ -38,7 +38,7 @@ class ClientStorage:
         Session = sessionmaker(bind=self.db_engine)
         self.session = Session()
 
-    def add_contact(self, contact_name):
+    def add_contact(self, contact_name: str):
         """Записывает имя контакта в базу клиента."""
         contact = self.session.query(self.Contacts).filter_by(contact_name=contact_name)
         # Если нет среди контактов:
@@ -47,7 +47,7 @@ class ClientStorage:
             self.session.add(new_contact)
             self.session.commit()
 
-    def remove_contact(self, contact_name):
+    def remove_contact(self, contact_name: str):
         """Удаляет контакт пользователя."""
         contact = self.session.query(self.Contacts).filter_by(contact_name=contact_name)
         if contact.count():
@@ -62,7 +62,7 @@ class ClientStorage:
             contacts.append(contact[0])
         return contacts
 
-    def get_message_history(self, contact_name=None):
+    def get_message_history(self, contact_name: str=None):
         """Возвращает историю переписки."""
         response = self.session.query(self.Posts)
         if contact_name:
@@ -72,7 +72,7 @@ class ClientStorage:
             messages.append((message.user_from, message.user_to, message.post, message.created_at))
         return messages
 
-    def save_message(self, user_from, user_to, post):
+    def save_message(self, user_from: str, user_to: str, post: str):
         """Сохраняет в базе историю сообщений."""
         message = self.Posts(user_from, user_to, post)
         self.session.add(message)
@@ -81,22 +81,22 @@ class ClientStorage:
 
 if __name__ == '__main__':
     db_path = 'test'
-    client_name = 'client_1'
+    client_name = 'client1'
     test_db = ClientStorage(db_path, client_name)
 
-    test_db.add_contact('client_2')
-    test_db.add_contact('client_3')
-    test_db.add_contact('client_4')
+    test_db.add_contact('client2')
+    test_db.add_contact('client3')
+    test_db.add_contact('client4')
     print(test_db.get_contacts())
 
-    test_db.add_contact('client_4')
+    test_db.add_contact('client4')
     print(test_db.get_contacts())
 
-    test_db.save_message('client_1', 'client_2', 'Hi, client_2')
-    test_db.save_message('client_2', 'client_1', 'Hello, client_1')
-    test_db.save_message('client_1', 'client_3', 'Hi, client_3')
+    test_db.save_message('client1', 'client2', 'Hi, client2')
+    test_db.save_message('client2', 'client1', 'Hello, client1')
+    test_db.save_message('client1', 'client3', 'Hi, client3')
     print(test_db.get_message_history())
-    print(test_db.get_message_history('client_2'))
+    print(test_db.get_message_history('client2'))
 
-    test_db.remove_contact('client_4')
+    test_db.remove_contact('client4')
     print(test_db.get_contacts())

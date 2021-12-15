@@ -13,14 +13,8 @@ from common.utils import get_message, send_message
 from decorators import Log
 from metaclasses import ClientVerifier
 from client_db import ClientStorage
-from PyQt5.QtWidgets import QApplication
-from client_window import ClientMainWindow
 
 CLIENT_LOGGER = logging.getLogger('client')
-# Блокировка потоков на время работы:
-sock_lock = threading.Lock()
-db_lock = threading.Lock()
-
 
 # Класс Клиент:
 class Client(threading.Thread, metaclass=ClientVerifier):
@@ -71,7 +65,7 @@ class ClientSender(Client):
         try:
             send_message(self.sock, message_dict)
             self.logger.info(f'Отправлено сообщение для клиента {destination}.')
-        except OSError:
+        except Exception:
             self.logger.critical('Потеряно соединение с сервером.')
             sys.exit(1)
 
@@ -86,16 +80,15 @@ class ClientSender(Client):
             # Запрос подсказки:
             elif command == 'help':
                 self.display_help()
-                # Запрос на выход:
+            # Запрос на выход:
             elif command == 'exit':
-
                 try:
                     send_message(self.sock, self.create_exit_message())
                 except Exception:
                     pass
                 print('Завершение сеанса.')
                 self.logger.info(f'Клиент {self.account_name} завершил сеанс.')
-                time.sleep(1)
+                time.sleep(0.2)
                 break
             # Запрос списка контактов:
             elif command == 'contacts':
@@ -105,7 +98,6 @@ class ClientSender(Client):
             # Запрос на добавление контакта:
             elif command == 'add':
                 contact_name = input('Введите имя контакта: ')
-
                 self.database.add_contact(contact_name)
                 self.logger.debug('Контакт добавлен в клиентскую базу.')
                 try:
@@ -130,9 +122,15 @@ class ClientReceiver(Client):
     def run(self):
         """Основной цикл приема сообщений."""
         while True:
-            time.sleep(1)
             try:
                 message = get_message(self.sock)
+            except (OSError, ConnectionError, ConnectionResetError, ConnectionAbortedError):
+                self.logger.critical('Потеряно соединение с сервером.')
+                break
+            except json.JSONDecodeError:
+                self.logger.critical('Не удалось декодировать сообщение.')
+                break
+            else:
                 if ACTION in message and message[ACTION] == MESSAGE and SENDER in message and DESTINATION in message \
                         and message[DESTINATION] == self.account_name and MESSAGE_TEXT in message:
                     print()
@@ -140,18 +138,12 @@ class ClientReceiver(Client):
                           f'{message[MESSAGE_TEXT]}')
                     self.logger.info(f'Клиентом {message[DESTINATION]} от клиента {message[SENDER]} '
                                      f'получено сообщение: {message[MESSAGE_TEXT]}')
-
+                    # Сохраняем сообщение в базе:
                     self.database.save_message(message[SENDER], self.account_name, message[MESSAGE_TEXT])
-                elif RESPONSE in message:
-                    pass
+                elif RESPONSE in message and message[RESPONSE] == 200:
+                    print('Операция добавления/удаления клиента выполнена!')
                 else:
                     self.logger.error(f'Получено некорректное сообщение: {message}.')
-            except (OSError, ConnectionError, ConnectionResetError, ConnectionAbortedError):
-                self.logger.critical('Потеряно соединение с сервером.')
-                break
-            except json.JSONDecodeError:
-                self.logger.critical('Не удалось декодировать сообщение.')
-
 
 
 @Log(CLIENT_LOGGER)
@@ -174,7 +166,7 @@ def args_parser():
 
 
 @Log(CLIENT_LOGGER)
-def create_presence(account_name):
+def create_presence(account_name: str):
     """Формирует сообщение о присутствии клиента."""
     out_msg = {
         ACTION: PRESENCE,
@@ -199,7 +191,7 @@ def analyze_response_answer(message):
     return ValueError
 
 
-def get_contacts_list(sock, account_name):
+def get_contacts_list(sock, account_name: str):
     """Возвращает список контактов пользователя."""
     request = {
         ACTION: GET_CONTACTS,
@@ -214,13 +206,24 @@ def get_contacts_list(sock, account_name):
         raise ERROR('Ошибка сервера!')
 
 
-def add_contact(sock, account_name, contact):
+def connect_db(sock, database, account_name: str):
+    """Загружает базу данных клиента."""
+    try:
+        contacts = get_contacts_list(sock, account_name)
+    except Exception:
+        CLIENT_LOGGER.error('Ошибка получения контактов!')
+    else:
+        for contact in contacts:
+            database.add_contact(contact)
+
+
+def add_contact(sock, user_name: str, contact_name: str):
     """Запрос на добавление контакта."""
-    CLIENT_LOGGER.debug(f'Добавление контакта {contact}')
+    CLIENT_LOGGER.debug(f'Добавление контакта {contact_name} в базу сервера.')
     request = {
         ACTION: ADD_CONTACT,
-        USER: account_name,
-        ACCOUNT_NAME: contact,
+        USER: user_name,
+        ACCOUNT_NAME: contact_name,
         TIME: time.time()
     }
     send_message(sock, request)
@@ -232,13 +235,13 @@ def add_contact(sock, account_name, contact):
     print('Контакт добавлен.')
 
 
-def remove_contact(sock, account_name, contact):
+def remove_contact(sock, user_name: str, contact_name: str):
     """Запрос на удаление контакта."""
-    CLIENT_LOGGER.debug(f'Удаление контакта {contact}')
+    CLIENT_LOGGER.debug(f'Удаление контакта {contact_name}')
     request = {
         ACTION: REMOVE_CONTACT,
-        USER: account_name,
-        ACCOUNT_NAME: contact,
+        USER: user_name,
+        ACCOUNT_NAME: contact_name,
         TIME: time.time()
     }
     send_message(sock, request)
@@ -250,17 +253,6 @@ def remove_contact(sock, account_name, contact):
     print('Контакт удален.')
 
 
-def connect_db(sock, database, account_name):
-    """Загружает базу данных клиента."""
-    try:
-        contacts = get_contacts_list(sock, account_name)
-    except Exception:
-        CLIENT_LOGGER.error('Ошибка получения контактов!')
-    else:
-        for contact in contacts:
-            database.add_contact(contact)
-
-
 def main(db_path='test'):
     """
     Запуск командной строки.
@@ -270,10 +262,6 @@ def main(db_path='test'):
     """
     print('[Client started...]')
     server_address, server_port, account_name = args_parser()
-
-    client_app = QApplication(sys.argv)
-    main_window = ClientMainWindow()
-    client_app.exec_()
 
     if not account_name:
         account_name = input('Введите имя пользователя: ')
